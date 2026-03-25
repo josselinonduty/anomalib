@@ -37,13 +37,14 @@ Reference:
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from textwrap import dedent
 
 from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.image.mpdd import MPDDDataset
+from anomalib.data.datasets.image.mpdd import CATEGORIES, MPDDDataset
 from anomalib.data.utils import Split, TestSplitMode, ValSplitMode
 
 logger = logging.getLogger(__name__)
@@ -55,8 +56,10 @@ class MPDD(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/MPDD"``.
-        category (str): Category of the MPDD dataset (e.g. ``"bracket_black"`` or
-            ``"bracket_brown"``). Defaults to ``"bracket_black"``.
+        category (str | Sequence[str] | None): Category of the MPDD dataset (e.g. ``"bracket_black"`` or
+            ``"bracket_brown"``). Pass a list of category names to load multiple
+            categories, or ``None`` to load all categories.
+            Defaults to ``"bracket_black"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Test batch size.
@@ -113,10 +116,12 @@ class MPDD(AnomalibDataModule):
             ... )
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/MPDD",
-        category: str = "bracket_black",
+        category: str | Sequence[str] | None = "bracket_black",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -150,16 +155,19 @@ class MPDD(AnomalibDataModule):
 
     def _setup(self, _stage: str | None = None) -> None:
         """Set up the datasets and perform dynamic subset splitting."""
-        self.train_data = MPDDDataset(
-            split=Split.TRAIN,
-            root=self.root,
-            category=self.category,
-        )
-        self.test_data = MPDDDataset(
-            split=Split.TEST,
-            root=self.root,
-            category=self.category,
-        )
+        categories = self._resolve_categories()
+        self.train_data = MPDDDataset(split=Split.TRAIN, root=self.root, category=categories[0])
+        self.test_data = MPDDDataset(split=Split.TEST, root=self.root, category=categories[0])
+        self.train_data.samples["category"] = categories[0]
+        self.test_data.samples["category"] = categories[0]
+
+        for cat in categories[1:]:
+            train_ds = MPDDDataset(split=Split.TRAIN, root=self.root, category=cat)
+            test_ds = MPDDDataset(split=Split.TEST, root=self.root, category=cat)
+            train_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.test_data = self.test_data + test_ds
 
     def prepare_data(self) -> None:
         """Verify that the dataset is available and provide download instructions.

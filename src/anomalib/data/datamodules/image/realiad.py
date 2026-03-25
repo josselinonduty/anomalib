@@ -41,6 +41,7 @@ License:
     https://creativecommons.org/licenses/by-nc-sa/4.0/
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 from textwrap import dedent
 
@@ -57,8 +58,10 @@ class RealIAD(AnomalibDataModule):
     Args:
         root (Path | str): Path to root directory containing the dataset.
             Defaults to ``"./datasets/Real-IAD"``.
-        category (str): Category of the Real-IAD dataset (e.g. ``"audiojack"`` or
-            ``"button_battery"``). Defaults to ``"audiojack"``.
+        category (str | Sequence[str] | None): Category of the Real-IAD dataset (e.g. ``"audiojack"`` or
+            ``"button_battery"``). Pass a list of category names to load
+            multiple categories, or ``None`` to load all categories.
+            Defaults to ``"audiojack"``.
         resolution (str | int): Image resolution to use (e.g. ``"256"``, ``"512"``,
             ``"1024"``, ``"raw"`` or their integer equivalents).
             For example, both "256" and 256 are valid. Defaults to ``256``.
@@ -152,10 +155,12 @@ class RealIAD(AnomalibDataModule):
         - Segmentation masks are provided for anomalous samples
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/Real-IAD",
-        category: str = "audiojack",
+        category: str | Sequence[str] | None = "audiojack",
         resolution: str | int = 256,
         json_path: str | Path = "realiad_jsons/realiad_jsons/{category}.json",
         train_batch_size: int = 32,
@@ -193,9 +198,11 @@ class RealIAD(AnomalibDataModule):
         self.json_path = json_path
 
         # Validate inputs
-        if category not in CATEGORIES:
-            msg = f"Category {category} not found in Real-IAD dataset. Available categories: {CATEGORIES}"
-            raise ValueError(msg)
+        categories = self._resolve_categories()
+        for cat in categories:
+            if cat not in CATEGORIES:
+                msg = f"Category {cat} not found in Real-IAD dataset. Available categories: {CATEGORIES}"
+                raise ValueError(msg)
 
         if resolution not in RESOLUTIONS:
             msg = f"Resolution {resolution} not found in Real-IAD dataset. Available resolutions: {RESOLUTIONS}"
@@ -232,20 +239,43 @@ class RealIAD(AnomalibDataModule):
 
     def _setup(self, _stage: str | None = None) -> None:
         """Set up the datasets and perform dynamic subset splitting."""
+        categories = self._resolve_categories()
         self.train_data = RealIADDataset(
             split=Split.TRAIN,
             root=self.root,
-            category=self.category,
+            category=categories[0],
             resolution=self.resolution,
             json_path=self.json_path,
         )
         self.test_data = RealIADDataset(
             split=Split.TEST,
             root=self.root,
-            category=self.category,
+            category=categories[0],
             resolution=self.resolution,
             json_path=self.json_path,
         )
+        self.train_data.samples["category"] = categories[0]
+        self.test_data.samples["category"] = categories[0]
+
+        for cat in categories[1:]:
+            train_ds = RealIADDataset(
+                split=Split.TRAIN,
+                root=self.root,
+                category=cat,
+                resolution=self.resolution,
+                json_path=self.json_path,
+            )
+            test_ds = RealIADDataset(
+                split=Split.TEST,
+                root=self.root,
+                category=cat,
+                resolution=self.resolution,
+                json_path=self.json_path,
+            )
+            train_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.test_data = self.test_data + test_ds
 
 
 def get_download_instructions(root_path: Path) -> str:

@@ -26,13 +26,14 @@ Reference: https://arxiv.org/abs/2507.07838
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from shutil import move
 
 from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.depth.adam_3d import ADAM3DDataset
+from anomalib.data.datasets.depth.adam_3d import CATEGORIES, ADAM3DDataset
 from anomalib.data.utils import DownloadInfo, Split, TestSplitMode, ValSplitMode, download_and_extract
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,10 @@ class ADAM3D(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/ADAM3D"``.
-        category (str): Category of the 3D-ADAM dataset (e.g. ``"1m1"`` or
-            ``"spiral_gear"``). Defaults to ``"1m1"``.
+        category (str | Sequence[str] | None): Category of the 3D-ADAM dataset (e.g. ``"1m1"`` or
+            ``"spiral_gear"``). Pass a list of category names to load multiple
+            categories, or ``None`` to load all categories.
+            Defaults to ``"1m1"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Test batch size.
@@ -79,10 +82,12 @@ class ADAM3D(AnomalibDataModule):
             Defaults to ``None``.
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/ADAM3D",
-        category: str = "1m1",
+        category: str | Sequence[str] | None = "1m1",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -121,20 +126,24 @@ class ADAM3D(AnomalibDataModule):
             _stage (str | None, optional): Stage of setup. Not used.
                 Defaults to ``None``.
         """
-        self.train_data = ADAM3DDataset(
-            split=Split.TRAIN,
-            root=self.root,
-            category=self.category,
-        )
-        self.test_data = ADAM3DDataset(
-            split=Split.TEST,
-            root=self.root,
-            category=self.category,
-        )
+        categories = self._resolve_categories()
+        self.train_data = ADAM3DDataset(split=Split.TRAIN, root=self.root, category=categories[0])
+        self.test_data = ADAM3DDataset(split=Split.TEST, root=self.root, category=categories[0])
+        self.train_data.samples["category"] = categories[0]
+        self.test_data.samples["category"] = categories[0]
+
+        for cat in categories[1:]:
+            train_ds = ADAM3DDataset(split=Split.TRAIN, root=self.root, category=cat)
+            test_ds = ADAM3DDataset(split=Split.TEST, root=self.root, category=cat)
+            train_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.test_data = self.test_data + test_ds
 
     def prepare_data(self) -> None:
         """Download the dataset if not available."""
-        if (self.root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.root / cat).is_dir() for cat in categories):
             logger.info("Found the dataset.")
         else:
             download_and_extract(self.root, DOWNLOAD_INFO)

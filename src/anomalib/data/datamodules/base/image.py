@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -127,7 +128,7 @@ class AnomalibDataModule(LightningDataModule, ABC):
         self.test_data: AnomalibDataset
 
         self._samples: DataFrame | None = None
-        self._category: str = ""
+        self._category: str | Sequence[str] | None = ""
 
         self._is_setup = False  # flag to track if setup has been called
 
@@ -258,22 +259,47 @@ class AnomalibDataModule(LightningDataModule, ABC):
         raise NotImplementedError
 
     @property
-    def category(self) -> str:
+    def category(self) -> str | list[str] | None:
         """Get dataset category name.
 
         Returns:
-            str: Name of the current category
+            str | list[str] | None: Name of the current category, list of
+                categories, or None for all categories.
         """
         return self._category
 
     @category.setter
-    def category(self, category: str) -> None:
+    def category(self, category: str | Sequence[str] | None) -> None:
         """Set dataset category name.
 
         Args:
-            category (str): Category name to set
+            category (str | Sequence[str] | None): Category name, list of
+                category names, or None to use all available categories.
         """
         self._category = category
+
+    def _resolve_categories(self) -> list[str]:
+        """Resolve the category parameter into a list of category strings.
+
+        Returns:
+            list[str]: List of category names to use.
+
+        Raises:
+            ValueError: If category is None and the subclass does not define
+                a ``CATEGORIES`` class variable.
+        """
+        if isinstance(self._category, str):
+            return [self._category]
+        if isinstance(self._category, Sequence):
+            return list(self._category)
+        # category is None -> use all available categories
+        if hasattr(self, "CATEGORIES"):
+            return list(self.CATEGORIES)
+        msg = (
+            f"{self.__class__.__name__} does not define a CATEGORIES class "
+            "variable. Pass an explicit category or list of categories."
+        )
+        raise ValueError(msg)
 
     @property
     def task(self) -> TaskType:

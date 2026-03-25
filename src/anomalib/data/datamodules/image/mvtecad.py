@@ -46,12 +46,13 @@ Reference:
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.image.mvtecad import MVTecADDataset
+from anomalib.data.datasets.image.mvtecad import CATEGORIES, MVTecADDataset
 from anomalib.data.utils import DownloadInfo, Split, TestSplitMode, ValSplitMode, download_and_extract
 from anomalib.utils import deprecate
 
@@ -72,8 +73,10 @@ class MVTecAD(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/MVTecAD"``.
-        category (str): Category of the MVTec AD dataset (e.g. ``"bottle"`` or
-            ``"cable"``). Defaults to ``"bottle"``.
+        category (str | Sequence[str] | None): Category of the MVTec AD dataset
+            (e.g. ``"bottle"`` or ``"cable"``). Pass a list of category names
+            to load multiple categories, or ``None`` to load all categories.
+            Defaults to ``"bottle"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Test batch size.
@@ -115,6 +118,14 @@ class MVTecAD(AnomalibDataModule):
 
             >>> datamodule = MVTecAD(category="cable")
 
+        Load multiple categories::
+
+            >>> datamodule = MVTecAD(category=["bottle", "cable"])
+
+        Load all categories::
+
+            >>> datamodule = MVTecAD(category=None)
+
         Create validation set from test data::
 
             >>> datamodule = MVTecAD(
@@ -130,10 +141,12 @@ class MVTecAD(AnomalibDataModule):
             ... )
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/MVTecAD",
-        category: str = "bottle",
+        category: str | Sequence[str] | None = "bottle",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -181,13 +194,38 @@ class MVTecAD(AnomalibDataModule):
         self.train_data = MVTecADDataset(
             split=Split.TRAIN,
             root=self.root,
-            category=self.category,
+            category=self._resolve_categories()[0],
         )
         self.test_data = MVTecADDataset(
             split=Split.TEST,
             root=self.root,
-            category=self.category,
+            category=self._resolve_categories()[0],
         )
+
+        categories = self._resolve_categories()
+        if len(categories) > 1:
+            # Add category column to first dataset's samples
+            self.train_data.samples["category"] = categories[0]
+            self.test_data.samples["category"] = categories[0]
+
+            for cat in categories[1:]:
+                train_ds = MVTecADDataset(
+                    split=Split.TRAIN,
+                    root=self.root,
+                    category=cat,
+                )
+                test_ds = MVTecADDataset(
+                    split=Split.TEST,
+                    root=self.root,
+                    category=cat,
+                )
+                train_ds.samples["category"] = cat
+                test_ds.samples["category"] = cat
+                self.train_data = self.train_data + train_ds
+                self.test_data = self.test_data + test_ds
+        elif len(categories) == 1:
+            self.train_data.samples["category"] = categories[0]
+            self.test_data.samples["category"] = categories[0]
 
     def prepare_data(self) -> None:
         """Download the dataset if not available.
@@ -213,7 +251,8 @@ class MVTecAD(AnomalibDataModule):
                     ├── cable/
                     └── ...
         """
-        if (self.root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.root / cat).is_dir() for cat in categories):
             logger.info("Found the dataset.")
         else:
             download_and_extract(self.root, DOWNLOAD_INFO)

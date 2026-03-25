@@ -40,6 +40,7 @@ Reference:
 
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import cv2
@@ -47,7 +48,7 @@ from torchvision.transforms.v2 import Transform
 from tqdm import tqdm
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.image.btech import BTechDataset
+from anomalib.data.datasets.image.btech import CATEGORIES, BTechDataset
 from anomalib.data.utils import DownloadInfo, Split, TestSplitMode, ValSplitMode, download_and_extract
 
 logger = logging.getLogger(__name__)
@@ -65,8 +66,9 @@ class BTech(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/BTech"``.
-        category (str): Category of the BTech dataset (e.g. ``"01"``, ``"02"``,
-            or ``"03"``).
+        category (str | Sequence[str] | None): Category of the BTech dataset (e.g. ``"01"``, ``"02"``,
+            or ``"03"``). Pass a list of category names to load multiple
+            categories, or ``None`` to load all categories.
             Defaults to ``"01"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
@@ -137,10 +139,12 @@ class BTech(AnomalibDataModule):
             (torch.Size([32, 3, 256, 256]), torch.Size([32, 256, 256]))
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/BTech",
-        category: str = "01",
+        category: str | Sequence[str] | None = "01",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -173,16 +177,27 @@ class BTech(AnomalibDataModule):
         self.category = category
 
     def _setup(self, _stage: str | None = None) -> None:
+        categories = self._resolve_categories()
         self.train_data = BTechDataset(
             split=Split.TRAIN,
             root=self.root,
-            category=self.category,
+            category=categories[0],
         )
         self.test_data = BTechDataset(
             split=Split.TEST,
             root=self.root,
-            category=self.category,
+            category=categories[0],
         )
+        self.train_data.samples["category"] = categories[0]
+        self.test_data.samples["category"] = categories[0]
+
+        for cat in categories[1:]:
+            train_ds = BTechDataset(split=Split.TRAIN, root=self.root, category=cat)
+            test_ds = BTechDataset(split=Split.TEST, root=self.root, category=cat)
+            train_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.test_data = self.test_data + test_ds
 
     def prepare_data(self) -> None:
         """Download the dataset if not available.
@@ -216,7 +231,8 @@ class BTech(AnomalibDataModule):
                     ├── 02
                     └── 03
         """
-        if (self.root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.root / cat).is_dir() for cat in categories):
             logger.info("Found the dataset.")
         else:
             download_and_extract(self.root.parent, DOWNLOAD_INFO)

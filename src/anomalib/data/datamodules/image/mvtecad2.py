@@ -31,6 +31,7 @@ Reference:
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from lightning.pytorch.utilities.types import EVAL_DATALOADERS
@@ -39,7 +40,7 @@ from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
 from anomalib.data.datasets.image import MVTecAD2Dataset
-from anomalib.data.datasets.image.mvtecad2 import TestType
+from anomalib.data.datasets.image.mvtecad2 import CATEGORIES, TestType
 from anomalib.data.utils import DownloadInfo, Split, download_and_extract
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,9 @@ class MVTecAD2(AnomalibDataModule):
     Args:
         root (str | Path): Path to the dataset root directory.
             Defaults to ``"./datasets/MVTec_AD_2"``.
-        category (str): Name of the MVTec AD 2 category to load.
-            Defaults to ``"sheet_metal"``.
+        category (str | Sequence[str] | None): Name of the MVTec AD 2 category to load.
+            Pass a list of category names to load multiple categories, or
+            ``None`` to load all categories. Defaults to ``"sheet_metal"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Validation and test batch size.
@@ -109,10 +111,12 @@ class MVTecAD2(AnomalibDataModule):
         >>> mixed_loader = datamodule.test_dataloader(test_type="private_mixed")
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: str | Path = "./datasets/MVTec_AD_2",
-        category: str = "sheet_metal",
+        category: str | Sequence[str] | None = "sheet_metal",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -163,7 +167,8 @@ class MVTecAD2(AnomalibDataModule):
                     ├── fabric/
                     └── ...
         """
-        if (self.root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.root / cat).is_dir() for cat in categories):
             logger.info("Found the dataset.")
         else:
             download_and_extract(self.root, DOWNLOAD_INFO)
@@ -175,45 +180,90 @@ class MVTecAD2(AnomalibDataModule):
             _stage: str | None: Optional argument for compatibility with pytorch
                 lightning. Defaults to None.
         """
+        categories = self._resolve_categories()
+        cat0 = categories[0]
+
         self.train_data = MVTecAD2Dataset(
             root=self.root,
-            category=self.category,
+            category=cat0,
             split=Split.TRAIN,
             augmentations=self.train_augmentations,
         )
-
-        # MVTec AD 2 has a dedicated validation set
         self.val_data = MVTecAD2Dataset(
             root=self.root,
-            category=self.category,
+            category=cat0,
             split=Split.VAL,
             augmentations=self.val_augmentations,
         )
-
-        # Create datasets for all test types
         self.test_public_data = MVTecAD2Dataset(
             root=self.root,
-            category=self.category,
+            category=cat0,
             split=Split.TEST,
             test_type=TestType.PUBLIC,
             augmentations=self.test_augmentations,
         )
-
         self.test_private_data = MVTecAD2Dataset(
             root=self.root,
-            category=self.category,
+            category=cat0,
             split=Split.TEST,
             test_type=TestType.PRIVATE,
             augmentations=self.test_augmentations,
         )
-
         self.test_private_mixed_data = MVTecAD2Dataset(
             root=self.root,
-            category=self.category,
+            category=cat0,
             split=Split.TEST,
             test_type=TestType.PRIVATE_MIXED,
             augmentations=self.test_augmentations,
         )
+
+        self.train_data.samples["category"] = cat0
+        self.val_data.samples["category"] = cat0
+        self.test_public_data.samples["category"] = cat0
+        self.test_private_data.samples["category"] = cat0
+        self.test_private_mixed_data.samples["category"] = cat0
+
+        for cat in categories[1:]:
+            train_ds = MVTecAD2Dataset(
+                root=self.root,
+                category=cat,
+                split=Split.TRAIN,
+                augmentations=self.train_augmentations,
+            )
+            val_ds = MVTecAD2Dataset(
+                root=self.root,
+                category=cat,
+                split=Split.VAL,
+                augmentations=self.val_augmentations,
+            )
+            pub_ds = MVTecAD2Dataset(
+                root=self.root,
+                category=cat,
+                split=Split.TEST,
+                test_type=TestType.PUBLIC,
+                augmentations=self.test_augmentations,
+            )
+            priv_ds = MVTecAD2Dataset(
+                root=self.root,
+                category=cat,
+                split=Split.TEST,
+                test_type=TestType.PRIVATE,
+                augmentations=self.test_augmentations,
+            )
+            mixed_ds = MVTecAD2Dataset(
+                root=self.root,
+                category=cat,
+                split=Split.TEST,
+                test_type=TestType.PRIVATE_MIXED,
+                augmentations=self.test_augmentations,
+            )
+            for ds in [train_ds, val_ds, pub_ds, priv_ds, mixed_ds]:
+                ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.val_data = self.val_data + val_ds
+            self.test_public_data = self.test_public_data + pub_ds
+            self.test_private_data = self.test_private_data + priv_ds
+            self.test_private_mixed_data = self.test_private_mixed_data + mixed_ds
 
         # Always set test_data to public test set for standard evaluation
         self.test_data = self.test_public_data

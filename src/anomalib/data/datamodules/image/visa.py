@@ -47,13 +47,14 @@ Reference:
 import csv
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import cv2
 from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.image.visa import VisaDataset
+from anomalib.data.datasets.image.visa import CATEGORIES, VisaDataset
 from anomalib.data.utils import DownloadInfo, Split, TestSplitMode, ValSplitMode, download_and_extract
 
 logger = logging.getLogger(__name__)
@@ -71,8 +72,9 @@ class Visa(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/visa"``.
-        category (str): Category of the VisA dataset (e.g. ``"candle"``).
-            Defaults to ``"capsules"``.
+        category (str | Sequence[str] | None): Category of the VisA dataset (e.g. ``"candle"``). Pass
+            a list of category names to load multiple categories, or ``None`` to
+            load all categories. Defaults to ``"capsules"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Test batch size.
@@ -99,10 +101,12 @@ class Visa(AnomalibDataModule):
             Defaults to ``None``.
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/visa",
-        category: str = "capsules",
+        category: str | Sequence[str] | None = "capsules",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -136,16 +140,19 @@ class Visa(AnomalibDataModule):
         self.category = category
 
     def _setup(self, _stage: str | None = None) -> None:
-        self.train_data = VisaDataset(
-            split=Split.TRAIN,
-            root=self.split_root,
-            category=self.category,
-        )
-        self.test_data = VisaDataset(
-            split=Split.TEST,
-            root=self.split_root,
-            category=self.category,
-        )
+        categories = self._resolve_categories()
+        self.train_data = VisaDataset(split=Split.TRAIN, root=self.split_root, category=categories[0])
+        self.test_data = VisaDataset(split=Split.TEST, root=self.split_root, category=categories[0])
+        self.train_data.samples["category"] = categories[0]
+        self.test_data.samples["category"] = categories[0]
+
+        for cat in categories[1:]:
+            train_ds = VisaDataset(split=Split.TRAIN, root=self.split_root, category=cat)
+            test_ds = VisaDataset(split=Split.TEST, root=self.split_root, category=cat)
+            train_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.test_data = self.test_data + test_ds
 
     def prepare_data(self) -> None:
         """Download and prepare the dataset if not available.
@@ -175,10 +182,11 @@ class Visa(AnomalibDataModule):
                 │   └── ...
                 └── VisA_20220922.tar
         """
-        if (self.split_root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.split_root / cat).is_dir() for cat in categories):
             # dataset is available, and split has been applied
             logger.info("Found the dataset and train/test split.")
-        elif (self.root / self.category).is_dir():
+        elif (self.root / categories[0]).is_dir() or any((self.root / cat).is_dir() for cat in categories):
             # dataset is available, but split has not yet been applied
             logger.info("Found the dataset. Applying train/test split.")
             self.apply_cls1_split()

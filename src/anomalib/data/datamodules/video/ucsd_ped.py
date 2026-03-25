@@ -9,6 +9,7 @@ non-pedestrian entities like cars, bikes, etc.
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from shutil import move
 
@@ -16,7 +17,7 @@ from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.video import AnomalibVideoDataModule
 from anomalib.data.datasets.base.video import VideoTargetFrame
-from anomalib.data.datasets.video.ucsd_ped import UCSDpedDataset
+from anomalib.data.datasets.video.ucsd_ped import CATEGORIES, UCSDpedDataset
 from anomalib.data.utils import DownloadInfo, Split, ValSplitMode, download_and_extract
 
 logger = logging.getLogger(__name__)
@@ -34,8 +35,10 @@ class UCSDped(AnomalibVideoDataModule):
     Args:
         root (Path | str): Path to the root directory where the dataset will be
             downloaded and extracted. Defaults to ``"./datasets/ucsd"``.
-        category (str): Dataset subcategory. Must be either ``"UCSDped1"`` or
-            ``"UCSDped2"``. Defaults to ``"UCSDped2"``.
+        category (str | Sequence[str] | None): Dataset subcategory. Must be either
+            ``"UCSDped1"`` or ``"UCSDped2"``. Pass a list to load multiple
+            categories, or ``None`` to load all categories.
+            Defaults to ``"UCSDped2"``.
         clip_length_in_frames (int): Number of frames in each video clip.
             Defaults to ``2``.
         frames_between_clips (int): Number of frames between consecutive video
@@ -68,10 +71,12 @@ class UCSDped(AnomalibVideoDataModule):
         >>> test_loader = datamodule.test_dataloader()
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/ucsd",
-        category: str = "UCSDped2",
+        category: str | Sequence[str] | None = "UCSDped2",
         clip_length_in_frames: int = 2,
         frames_between_clips: int = 10,
         target_frame: VideoTargetFrame = VideoTargetFrame.LAST,
@@ -112,12 +117,13 @@ class UCSDped(AnomalibVideoDataModule):
         Args:
             _stage (str | None): Stage for Lightning. Can be "fit" or "test".
         """
+        categories = self._resolve_categories()
         self.train_data = UCSDpedDataset(
             clip_length_in_frames=self.clip_length_in_frames,
             frames_between_clips=self.frames_between_clips,
             target_frame=self.target_frame,
             root=self.root,
-            category=self.category,
+            category=categories[0],
             split=Split.TRAIN,
         )
 
@@ -126,7 +132,7 @@ class UCSDped(AnomalibVideoDataModule):
             frames_between_clips=self.frames_between_clips,
             target_frame=self.target_frame,
             root=self.root,
-            category=self.category,
+            category=categories[0],
             split=Split.TEST,
         )
 
@@ -136,7 +142,8 @@ class UCSDped(AnomalibVideoDataModule):
         The method checks if the dataset directory exists. If not, it downloads
         and extracts the dataset to the specified root directory.
         """
-        if (self.root / self.category).is_dir():
+        categories = self._resolve_categories()
+        if all((self.root / cat).is_dir() for cat in categories):
             logger.info("Found the dataset.")
         else:
             download_and_extract(self.root, DOWNLOAD_INFO)

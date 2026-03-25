@@ -44,12 +44,13 @@ Reference:
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from torchvision.transforms.v2 import Transform
 
 from anomalib.data.datamodules.base.image import AnomalibDataModule
-from anomalib.data.datasets.image.mvtec_loco import MVTecLOCODataset
+from anomalib.data.datasets.image.mvtec_loco import CATEGORIES, MVTecLOCODataset
 from anomalib.data.utils import Split, TestSplitMode, ValSplitMode
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,10 @@ class MVTecLOCO(AnomalibDataModule):
     Args:
         root (Path | str): Path to the root of the dataset.
             Defaults to ``"./datasets/MVTec_LOCO"``.
-        category (str): Category of the MVTec LOCO dataset (e.g. ``"breakfast_box"`` or
-            ``"juice_bottle"``). Defaults to ``"breakfast_box"``.
+        category (str | Sequence[str] | None): Category of the MVTec LOCO dataset (e.g. ``"breakfast_box"`` or
+            ``"juice_bottle"``). Pass a list of category names to load
+            multiple categories, or ``None`` to load all categories.
+            Defaults to ``"breakfast_box"``.
         train_batch_size (int, optional): Training batch size.
             Defaults to ``32``.
         eval_batch_size (int, optional): Test batch size.
@@ -120,10 +123,12 @@ class MVTecLOCO(AnomalibDataModule):
             ... )
     """
 
+    CATEGORIES = CATEGORIES
+
     def __init__(
         self,
         root: Path | str = "./datasets/MVTec_LOCO",
-        category: str = "breakfast_box",
+        category: str | Sequence[str] | None = "breakfast_box",
         train_batch_size: int = 32,
         eval_batch_size: int = 32,
         num_workers: int = 8,
@@ -169,23 +174,23 @@ class MVTecLOCO(AnomalibDataModule):
             therefore be created as early as the `fit` stage.
         """
         # MVTec LOCO provides a training set that contains only normal images.
-        self.train_data = MVTecLOCODataset(
-            split=Split.TRAIN,
-            root=self.root,
-            category=self.category,
-        )
+        categories = self._resolve_categories()
+        cat0 = categories[0]
+        self.train_data = MVTecLOCODataset(split=Split.TRAIN, root=self.root, category=cat0)
+        self.val_data = MVTecLOCODataset(split=Split.VAL, root=self.root, category=cat0)
+        self.test_data = MVTecLOCODataset(split=Split.TEST, root=self.root, category=cat0)
 
-        # MVTec LOCO provides a validation set that contains only normal images.
-        self.val_data = MVTecLOCODataset(
-            split=Split.VAL,
-            root=self.root,
-            category=self.category,
-        )
+        self.train_data.samples["category"] = cat0
+        self.val_data.samples["category"] = cat0
+        self.test_data.samples["category"] = cat0
 
-        # MVTec LOCO provides a test set that contains both normal and anomalous images.
-        # Anomalous images are further divided into structural and logical anomalies.
-        self.test_data = MVTecLOCODataset(
-            split=Split.TEST,
-            root=self.root,
-            category=self.category,
-        )
+        for cat in categories[1:]:
+            train_ds = MVTecLOCODataset(split=Split.TRAIN, root=self.root, category=cat)
+            val_ds = MVTecLOCODataset(split=Split.VAL, root=self.root, category=cat)
+            test_ds = MVTecLOCODataset(split=Split.TEST, root=self.root, category=cat)
+            train_ds.samples["category"] = cat
+            val_ds.samples["category"] = cat
+            test_ds.samples["category"] = cat
+            self.train_data = self.train_data + train_ds
+            self.val_data = self.val_data + val_ds
+            self.test_data = self.test_data + test_ds
